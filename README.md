@@ -1,6 +1,11 @@
-This is MS-DOS 4.00 taken from the Microsoft repo:
-https://github.com/microsoft/MS-DOS
+This is MS-DOS 4.00 taken from neozeed's repo:
+[https://github.com/neozeed/dos400](https://github.com/neozeed/dos400)
 
+I have created and deleted one vibe-coded branch, I am re-basing off of his because it builds in dosbox (my original fork didn't).
+I will be making my vibe-coded changes on this branch, and keeping main unchanged for the sake of having a buildable reference.
+
+
+The original README from his repo is below:
 I just wanted a clean break to focus on the 4.0 part, all the terms conditions are the same it's all Microsoft & IBMs hard work,
 not mine.  I just kept hitting random keys until something happened.
 
