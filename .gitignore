@@ -875,6 +875,7 @@ src/messages/TEMPFILE.MSG
 src/messages/usa-ms.msg
 IO.SYS
 MSDOS.SYS
+COMMAND.COM
 boot144.img
 dos4_31mb.img
 dos4boot12.img
