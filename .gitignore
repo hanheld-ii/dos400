@@ -870,3 +870,6 @@ src/select/SERVICES.OBJ
 src/select/SSTUB.EXE
 src/select/SSTUB.OBJ
 src/select/VAR.OBJ
+src/inc/boot.inc
+src/messages/TEMPFILE.MSG
+src/messages/usa-ms.msg
