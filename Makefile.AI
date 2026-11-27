@@ -1,0 +1,7 @@
+.PHONY: clean build
+
+build:
+	./dosbuild.sh
+
+clean:
+	./clean.sh
