@@ -873,3 +873,10 @@ src/select/VAR.OBJ
 src/inc/boot.inc
 src/messages/TEMPFILE.MSG
 src/messages/usa-ms.msg
+IO.SYS
+MSDOS.SYS
+boot144.img
+dos4_31mb.img
+dos4boot12.img
+dos4boot144.img
+dos4hd.vhd

@@ -3,4 +3,10 @@
 for ext in CL1 CL2 CL3 CL4 CLA CLB CLC CLD CLE CLF CTL CPI MAP OBJ EXE COM SYS; do
     find src -type f -name "*.${ext}" -exec rm -v {} +
     done
-    
+
+rm *.img
+rm *.vhd
+tar xpf backup/tools.txz    
+
+
+
