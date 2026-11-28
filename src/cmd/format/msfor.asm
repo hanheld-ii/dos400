@@ -180,6 +180,17 @@ BPB91	a_BPB	<512, 1, 1, 2,	64, 1*9*40, 0fcH, 2, 9, 1, 0, 0, 0, 0>
 BPB82	a_BPB	<512, 2, 1, 2, 112, 2*8*40, 0ffH, 1, 8, 2, 0, 0, 0, 0>
 BPB81	a_BPB	<512, 1, 1, 2,	64, 1*8*40, 0feH, 1, 8, 1, 0, 0, 0, 0>
 BPB720	a_BPB	<512, 2, 1, 2, 112, 2*9*80, 0F9h, 3, 9, 2, 0, 0, 0, 0>
+; 2.88mb extended density.  80 cylinders, 2 heads, 36 sectors/track,
+; 1 sector/cluster, 240 root entries and a 16 bit FAT.
+; TotalSectors = 80*2*36 = 5760.  The automatic Calc_Total arithmetic cannot
+; produce a consistent FAT size for this geometry, so the values are fixed:
+;   directory sectors = 240*32/512  = 15
+;   start sector      = 1 + 2*FAT + 15
+;   data clusters     = (5760 - start) / 1
+; With 23 FAT sectors: start = 62, 5698 clusters, 11396 bytes needed = 23
+; sectors of FAT.  This is self consistent and, being above
+; BIG_FAT_THRESHOLD (4086), also makes SetfBigFat select a 16 bit FAT.
+BPB2880 a_BPB	<512, 1, 1, 2, 240, 2*36*80, 0F0h, 23, 36, 2, 0, 0, 0, 0>
 
 
 
@@ -426,7 +437,7 @@ Got48:
 
 						;Are any interesting switches set?
 CheckForInterestingSwitches:
-	test	switchmap, not (SWITCH_V or SWITCH_S or Switch_Backup or SWITCH_SELECT or SWITCH_AUTOTEST or Switch_B)
+	test	switchmap, not (SWITCH_V or SWITCH_S or Switch_Backup or SWITCH_SELECT)
 	jz	Goto_EndSwitchCheck		;No, everything ok
 
 						;At this point there are switches other than /v/s/h
@@ -434,16 +445,16 @@ CheckForInterestingSwitches:
 	jz	Use_48tpi			;Not /n/t, so must be /b/1/8/4
 
 						;We've got /N/T, see if there are others
-	test	SwitchMap, not (SWITCH_N or SWITCH_T or SWITCH_V or SWITCH_S or Switch_Backup or SWITCH_SELECT or SWITCH_AUTOTEST)
+	test	SwitchMap, not (SWITCH_N or SWITCH_T or SWITCH_V or SWITCH_S or Switch_Backup)
 	jz	NT_Compatible			;Nope, all is well
 
 						;If 96tpi drive and /1 exists with /N/T, then okay, otherwise error
 	cmp	byte ptr deviceParameters.DP_DeviceType,DEV_5INCH96TPI
 	jne	Bad_NT_Combo
 
-	test	SwitchMap, not (SWITCH_1 or SWITCH_N or SWITCH_T or SWITCH_V)
+	test	SwitchMap, not (SWITCH_1 or SWITCH_N)
 	jnz	Bad_NT_Combo
-	test	SwitchMap, not (SWITCH_S or Switch_Backup or SWITCH_SELECT or Switch_Autotest)
+	test	SwitchMap, not (SWITCH_S or Switch_Backup)
 	jz	Goto_Got_BPB
 
 Bad_NT_Combo:
@@ -589,6 +600,25 @@ Check_720:
 	cmp	byte ptr deviceParameters.DP_DeviceType,DEV_5INCH
 	je	Calc_Total
 
+; 2.88mb extended density gets its own fixed BPB, just like 720k below.
+; The generic Calc_Total/FAT arithmetic cannot produce a self consistent
+; layout for this media, so copy the known good template instead.
+	test	SizeMap,Size_2880		;Extended density?		 ;AN001;
+;	$IF	NZ				;Yes				 ;AN001;
+	JZ $$IF54
+	   SaveReg <ds,es,si,di,cx>
+	   mov	   cx,seg data			;				;AN001;
+	   mov	   ds,cx			;				;AN001;
+	   mov	   es,cx			;				;AN001;
+	   mov	   si,offset BPB2880		;Copy the 2.88 BPB!		;AN001;
+	   mov	   di,offset deviceParameters.DP_BPB ;			;AN001;
+	   mov	   cx,size a_BPB		;				;AN001;
+	   rep	   movsb			;				;AN001;
+	   RestoreReg <cx,di,si,es,ds>		;				;AN001;
+	   jmp	   EndSwitchCheck		;				;AN001;
+;	$ENDIF					;				;AN001;
+$$IF54:
+
 	cmp	TrackCnt,80
 	jne	Calc_Total
 
@@ -642,12 +672,27 @@ Set_BPB:
 	xor	bx,bx
 	mov	bl,DeviceParameters.DP_BPB.BPB_SectorsPerCluster
 	div	bx				; DX:AX contains # of clusters
-; now multiply by 3/2
+; Select FAT12 (3/2 bytes per cluster) or FAT16 (2 bytes per cluster).
+; 2.88mb media (5760 sectors, 1 sector/cluster = 5696 clusters) exceeds the
+; FAT12 cluster limit and must be formatted with a 16 bit FAT. Use the same
+; threshold as SetfBigFat.
+	cmp	ax,BIG_FAT_THRESHOLD		;>= 4086 clusters?
+	jae	Calc_16Bit_Fat			;Yes, FAT16
+; 12 bit FAT: FAT bytes = clusters * 3 / 2
 	mov	bx,3
 	mul	bx
 	mov	bx,2
 	div	bx
 	xor	dx,dx				; throw away modulo
+	jmp	short Have_Fat_Bytes
+Calc_16Bit_Fat:
+; 16 bit FAT: FAT bytes = (clusters + 2) * 2
+	add	ax,2
+	adc	dx,0
+	mov	bx,2
+	mul	bx
+; dx:ax contains FAT bytes; fall through to the division by 512 below
+Have_Fat_Bytes:
 ; now divide by 512
 	mov	bx,512
 	div	bx
@@ -908,11 +953,12 @@ Small_Drives endp
 ;Routine name: Other_Drives
 ;*****************************************************************************
 ;
-;Description: See if 1.44 media or 720k media, setup /t/n, otherwise error
+;Description: See if 2.88mb, 1.44mb or 720k media, setup /t/n, otherwise error
 ;
 ;Called Procedures: Small_Drives
 ;
 ;Change History: Created	8/1/87	       MT
+;		 2.88mb support added					;AN001;
 ;
 ;Input: SizeMap
 ;	Fatal_Error = NO
@@ -921,11 +967,24 @@ Small_Drives endp
 ;	 SwitchMap
 ;	 TrackCnt
 ;	 NumSectors
-;	720k = /T:80 /N:9
+;	720k  = /T:80 /N:9
+;	1440k = /T:80 /N:18
+;	2880k = /T:80 /N:36
 ;*****************************************************************************
 
 Procedure Other_Drives				;				;AN001;
 
+	test	SizeMap,Size_2880		;Ask for 2.88mb diskette?	 ;AN001;
+;	$IF	NZ				;Yes				;AN001;
+	JZ $$IF51
+	   or	   SwitchMap,Switch_T+Switch_N	;Turn on /T:80 /N:36		;AN001;
+	   mov	   TrackCnt,80			;				;AN001;
+	   mov	   NumSectors,36		;				;AN001;
+; The extended density BPB is filled in later by Check_720, which copies the
+; fixed BPB2880 template exactly as it already does for 720k media.
+;	$ELSE					;Nope				;AN001;
+	JMP SHORT $$EN51
+$$IF51:
 	test	SizeMap,Size_1440		;Ask for 1.44mb diskette?	 ;AN001;
 ;	$IF	Z				;Nope				;AN001;
 	JNZ $$IF52
@@ -946,6 +1005,7 @@ $$IF52:
 	   mov	   NumSectors,18		; from non-standard drives with ;AN001;
 ;	$ENDIF					; type of 'other'		;AN001;
 $$EN52:
+$$EN51:
 	ret					;				;AN001;
 
 Other_Drives endp

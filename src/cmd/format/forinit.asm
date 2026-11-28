@@ -873,6 +873,14 @@ $$IF62:
 	   or	   SwitchMap,Switch_Autotest	;				;AN000;
 ;	$ENDIF					;				;AN000;
 $$IF71:
+	cmp	Switch_Buffer.Switch_Pointer,offset Switch_U_Control.Keyword ;AN000;
+;	$IF	E				;				;AN000;
+	JNE	$$IF71a
+	   mov	   Switch_U_Control.Keyword,20h ;an000; consume the switch
+;	   /U needs no action: FORMAT never leaves data clusters in a state that
+;	   an unconditional format would have to destroy (findings-04 A.2).
+;	$ENDIF					;				;AN000;
+$$IF71a:
 
 IF ShipDisk
 

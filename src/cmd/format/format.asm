@@ -323,8 +323,8 @@ fBigFat db	FALSE
 
 firstHead dw	?
 firstCylinder dw ?
-tracksLeft dw	?
-tracksPerDisk dw ?
+tracksLeft dd	?
+tracksPerDisk dd ?
 
 Formatted_Tracks_Low dw 0
 Formatted_Tracks_High dw 0
@@ -442,6 +442,20 @@ Environ_Segment dw	?			;an011; dms;hold segment of
 ;Used if NumberOfFATs in BPB
 ;is 0.
 
+; Each row is scrutinised by Scan_Disk_Table and Set_BPB_Info as follows:
+;   [si+0]  total sectors, high word     (compared against DX)
+;   [si+2]  total sectors, low word      (compared against AX)
+;   [si+4]  sectors per cluster in the high byte (moved to CH)
+;   [si+6]  root directory entries       (moved to RootEntries)
+;   [si+8]  FAT type flag, Fbig = 16 bit FAT
+; The scan walks the rows from top to bottom and stops at the first row whose
+; sector count is greater than or equal to the disk size.  The first row is
+; therefore the catch-all for every floppy sized disk up to 32680 sectors; the
+; following rows only matter for media reported as having no FATs at all.
+; 2.88mb extended density media normally arrives with NumberOfFATs = 2 from
+; the driver, so Set_BPB_Info is bypassed and Calc_Total in MSFOR.ASM builds
+; the 16 bit FAT.  There is deliberately no 2.88mb row here: a threshold row
+; small enough to match 5760 sectors would also capture smaller floppies.
 DiskTable	dw	0,	32680,	0803h,	512,	0
 		dw	4h,	0000h,	0402h,	512,	Fbig
 		dw	8h,	0000h,	0803h,	512,	Fbig
@@ -2132,30 +2146,35 @@ SetfBigFat endp
 Phase2Initialisation proc near
 
 ; Calculate first track/head to format (round up - kludge)
-	mov	ax, deviceParameters.DP_BPB.BPB_HiddenSectors
-	mov	dx, deviceParameters.DP_BPB.BPB_HiddenSectors + 2
-	add	ax, deviceParameters.DP_BPB.BPB_SectorsPerTrack
-	adc	dx, 0
-	dec	ax
-	sbb	dx, 0
-	div	deviceParameters.DP_BPB.BPB_SectorsPerTrack
+	mov	di, deviceParameters.DP_BPB.BPB_HiddenSectors
+	mov	si, deviceParameters.DP_BPB.BPB_HiddenSectors + 2
+	add	di, deviceParameters.DP_BPB.BPB_SectorsPerTrack
+	adc	si, 0
+	dec	di
+	sbb	si, 0
+	mov	cx, deviceParameters.DP_BPB.BPB_SectorsPerTrack
+	call	Divide_32_Bits				;SI:DI = (Hidden + SPT - 1) / SPT
+	mov	ax, di					;combined cyl/head count
 	xor	dx,dx
 	div	deviceParameters.DP_BPB.BPB_Heads
 	mov	firstCylinder, ax
 	mov	firstHead, dx
 
 ; Calculate the total number of tracks to be formatted (round down - kludge)
-	mov	ax, deviceParameters.DP_BPB.BPB_TotalSectors
-	xor	dx,dx
+; BPB_TotalSectors is a 16 bit field; BPB_BigTotalSectors is 32 bit
+	mov	di, deviceParameters.DP_BPB.BPB_TotalSectors
+	xor	si,si
 ; if (TotalSectors == 0) then use BigTotalSectors
-	or	ax,ax
+	or	si,di
 	jnz	NotBigTotalSectors
-	mov	ax, deviceParameters.DP_BPB.BPB_BigTotalSectors
-	mov	dx, deviceParameters.DP_BPB.BPB_BigTotalSectors + 2
+	mov	di, word ptr deviceParameters.DP_BPB.BPB_BigTotalSectors
+	mov	si, word ptr deviceParameters.DP_BPB.BPB_BigTotalSectors+2
 
 NotBigTotalSectors:
-	div	deviceParameters.DP_BPB.BPB_SectorsPerTrack
-	mov	tracksPerDisk, ax
+	mov	cx, deviceParameters.DP_BPB.BPB_SectorsPerTrack
+	call	Divide_32_Bits				;SI:DI = total sectors / SPT
+	mov	word ptr tracksPerDisk, di
+	mov	word ptr tracksPerDisk+2, si
 
 ; Initialise the directory buffer
 ; Clear out the Directory Sector before any information is inserted.
@@ -2356,8 +2375,10 @@ StdBPB:
 	mov	formatPacket.FP_Head, ax
 	mov	ax, firstCylinder
 	mov	formatPacket.FP_Cylinder, ax
-	mov	cx, tracksPerDisk
-	mov	tracksLeft, cx
+	mov	ax, word ptr tracksPerDisk
+	mov	dx, word ptr tracksPerDisk+2
+	mov	word ptr tracksLeft, ax
+	mov	word ptr tracksLeft+2, dx
 	mov	Format_End,False						;an015; dms;flag not at end of format
 	call	Calc_Max_Tracks_To_Format					;an015; dms;max track count for FormatTrack call
 FormatLoop:
@@ -2542,8 +2563,11 @@ DisplayCurrentTrack proc near
 	mov	bx,Formatted_Tracks_High	;				;AN000;
 	mov	cx,100				;Make integer calc for div	;AN000;
 	call	Multiply_32_Bits		; BX:AX = (Cyl * Head *100)	;AN000;
-	mov	dx,bx				;Set up divide			;AN000;
-	div	TracksPerDisk			;% = (Cyl * Head *100)/ # tracks;AN000;
+	mov	si,bx				;Set up 32 bit divide		;AN000;
+	mov	di,ax				;				;AN000;
+	mov	cx,word ptr TracksPerDisk	;divisor low word		;AN000;
+	mov	dx,word ptr TracksPerDisk+2	;divisor high word		;AN000;
+	call	Divide_32x32			;AX = % complete		;AN000;
 	cmp	ax,PercentComplete		;Only print message when change ;AN000;
 ;	$IF	NE				;To avoid excess cursor splat	;AN000;
 	JE $$IF54
@@ -2870,11 +2894,15 @@ CurrentLogicalSector proc near
 	push	bx								;an000; dms;
 	push	dx								;an000; dms;
 
-	mov	ax, tracksPerDisk
-	sub	ax, tracksLeft
-	xor	dx,dx								;an000; dms;clear dx
-	mul	deviceParameters.DP_BPB.BPB_SectorsPerTrack
-	mov	word ptr Relative_Sector_High,dx				;an000; dms;save high word of sector #
+; current track = tracksPerDisk - tracksLeft	(32 bit subtract)
+	mov	ax, word ptr tracksPerDisk
+	mov	bx, word ptr tracksPerDisk+2
+	sub	ax, word ptr tracksLeft
+	sbb	bx, word ptr tracksLeft+2
+; multiply 32 bit track count by sectors per track
+	mov	cx, deviceParameters.DP_BPB.BPB_SectorsPerTrack
+	call	Multiply_32_Bits			; BX:AX = track * SPT
+	mov	word ptr Relative_Sector_High,bx 				;an000; dms;save high word of sector #
 	mov	word ptr Relative_Sector_Low,ax 				;an000; dms;save low word of sector #
 
 	pop	dx								;an000; dms;restore regs
@@ -3030,6 +3058,66 @@ Procedure Divide_32_Bits							;an000; dms;
 	ret									;an000; dms;
 
 Divide_32_Bits	endp								;an000; dms;
+
+
+;=========================================================================
+; Divide_32x32	- Divide a 32 bit number by another 32 bit number.
+;
+;	Inputs	: SI:DI - value to be divided (dividend)
+;		  DX:CX - divisor
+;
+;	Outputs : AX    - quotient (16 bit result; valid when the true
+;			  quotient is < 65536, as is the case for the
+;			  percent-complete calculation)
+;
+;	Uses	: restoring shift-and-subtract division, 8086/88 safe.
+;=========================================================================
+
+Public Divide_32x32
+Divide_32x32	proc	near
+
+	push	bp								;save regs
+	mov	bp,sp								;frame pointer
+	push	si								;[bp-2] dividend high word
+	push	di								;[bp-4] dividend low word
+	push	bx								;[bp-6] saved bx
+	sub	sp,2								;[bp-8] bit counter
+
+	mov	word ptr [bp-8],32						;32 bits to process
+	xor	si,si								;remainder high = 0
+	xor	di,di								;remainder low = 0
+	xor	bx,bx								;quotient = 0
+
+D32x32Loop:
+	shl	word ptr [bp-4],1						;shift dividend left
+	rcl	word ptr [bp-2],1						;top bit -> carry
+	rcl	di,1								;shift remainder left
+	rcl	si,1								;
+	shl	bx,1								;shift quotient left
+	jc	D32x32BigRem							;remainder overflowed 32 bits
+	mov	ax,di								;remainder >= divisor?
+	sub	ax,cx								;compare low words
+	mov	ax,si								;flags preserved by mov
+	sbb	ax,dx								;compare high words
+	jc	D32x32NoSub							;remainder < divisor
+D32x32BigRem:
+	sub	di,cx								;subtract divisor
+	sbb	si,dx								;from remainder
+	inc	bx								;set quotient bit
+D32x32NoSub:
+	dec	word ptr [bp-8]						;next bit
+	jnz	D32x32Loop						;
+
+	mov	ax,bx								;quotient to ax
+
+	add	sp,2								;discard counter
+	pop	bx								;restore regs
+	pop	di								;
+	pop	si								;
+	pop	bp								;
+	ret									;
+
+Divide_32x32	endp
 
 
 
@@ -4125,20 +4213,22 @@ BadClus_Address_Adjust	endp							;an000; dms;
 Procedure NextTrack								;an015; dms;
 
 
-	cmp	TracksLeft,00							;an015; dms;end of format?
-;	$if	e								;an015; dms;yes
-	JNE $$IF149
-		stc								;an015; dms;signal end of format
-		mov	Format_End,True
-;	$else
-	JMP SHORT $$EN149
-$$IF149:
+	mov	ax,word ptr TracksLeft						;an015; dms;end of format?
+	or	ax,word ptr TracksLeft+2					;an015; dms;32 bit compare to 0
+	jnz	TLNotZero							;an015; dms;tracks remain
+	stc								;an015; dms;signal end of format
+	mov	Format_End,True
+	jmp	short $$EN149
+TLNotZero:
 		mov	cx,Tracks_To_Format					;an015; dms;get max track count for call
 ;		$do								;an015; dms;while tracks remain
 $$DO151:
-			cmp	TracksLeft,00					;an015; dms;end of format?
+			mov	ax,word ptr TracksLeft				;an015; dms;end of format?
+			or	ax,word ptr TracksLeft+2			;an015; dms;32 bit compare to 0
 ;			$leave	e						;an015; dms;yes
-			JE $$EN151
+			JNZ TLStillLeft
+			jmp	short $$EN151
+TLStillLeft:
 			cmp	cx,00						;an015; dms;end of head/cyl. adjustment?
 ;			$leave	e						;an015; dms;yes
 			JE $$EN151
@@ -4288,14 +4378,22 @@ Determine_Track_Count	endp							;an015;dms;
 Procedure Calc_Track_Count							;an015; dms;
 
 	push	ax								;an015; dms;save regs
+	push	dx								;an015; dms;save regs
 	mov	ax,Track_Count							;an015; dms;max bytes to format
-	cmp	ax,TracksLeft							;an015; dms;too many tracks?
+; compare 16 bit Track_Count with 32 bit TracksLeft
+	mov	dx,word ptr TracksLeft+2					;an015; dms;high word of remaining
+	or	dx,dx								;an015; dms;TracksLeft > 64K?
+;	$if	nz								;an015; dms;yes - use max
+	JZ CT_MaxOK
+		jmp	short CT_Use_Max
+CT_MaxOK:
+	cmp	ax,word ptr TracksLeft						;an015; dms;too many tracks?
 ;	$if	a								;an015; dms;yes
-	JNA $$IF166
-		mov	ax,TracksLeft						;an015; dms;format remaining tracks
-;	$endif									;an015; dms;
-$$IF166:
+	JNA CT_Use_Max
+		mov	ax,word ptr TracksLeft					;an015; dms;format remaining tracks
+CT_Use_Max:
 	mov	Tracks_To_Format,ax						;an015; dms;save track count
+	pop	dx								;an015; dms;restore regs
 
 	pop	ax								;an015; dms;
 
@@ -4462,9 +4560,12 @@ Format_Loop	endp								;an015; dms;
 Procedure Adj_Track_Count							;an015; dms;
 
 	push	ax								;an015; dms; save regs
-	mov	ax,TracksLeft							;an015; dms; get tracks remaining
+	mov	ax,word ptr TracksLeft						;an015; dms; get low word remaining
 	sub	ax,Tracks_To_Format						;an015; dms; subtract amount formatted
-	mov	TracksLeft,ax							;an015; dms; save new tracks remaining value
+	mov	word ptr TracksLeft,ax						;an015; dms; save new low word
+	mov	ax,word ptr TracksLeft+2					;an015; dms; get high word remaining
+	sbb	ax,0								;an015; dms; borrow from high word
+	mov	word ptr TracksLeft+2,ax					;an015; dms; save new high word
 	pop	ax								;an015; dms; restore regs
 	ret									;an015; dms;
 

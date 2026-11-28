@@ -188,9 +188,9 @@ Command_Control label byte			;				;AN000;
 	db	1,1				;Only drive letter posistional	;AN000;
 	dw	Positional_Control		;Pointer to control table	;AN000;
 IF ShipDisk
-	db	13				;if /Z switch needed		;an000; dms;
+	db	14				;if /Z switch needed		;an000; dms;
 ELSE
-	db	12				;				;AC001;
+	db	13				;				;AC001;
 ENDIF
 	dw	Switch_V_Control		;Without quotes 		AN000;
 	dw	Switch_S_Control		;				;AN000;
@@ -203,6 +203,7 @@ ENDIF
 	dw	Switch_Select_Control		;				;AN000;
 	dw	Switch_Backup_Control		;				;AN000;
 	dw	Switch_Autotest_Control 	;				;AN000;
+	dw	Switch_U_Control		;				;/U unconditional format
 	dw	Switch_F_Control		;				;AC001;
 IF ShipDisk
 	dw	Switch_Z_Control		;1 sector/cluster switch	;an000; dms;
@@ -334,7 +335,16 @@ Switch_Autotest_Control label byte		;				;AN000;
 	db	1				;				;AN000;
 	db	"/AUTOTEST",0                   ;                               ;AN000;
 
-Switch_F_Control label byte			;				;AN001;
+Switch_U_Control label byte			;				;AN000;
+
+	dw	None				;
+	dw	None				;
+	dw	Switch_Buffer			;
+	dw	No_Value			;
+	db	1				;
+	db	"/U",0                          ;                               ;AN000;
+
+Switch_F_Control label byte		;				;AN001;
 	dw	Simple_String			;/F:xxxxx			;AN001;
 	dw	File_Table_Capitalize		;Make it uppercase		;AN001;
 	dw	Switch_String_Buffer		;				;AN001;
@@ -381,7 +391,7 @@ Switch_Size_Value	label	byte		;				;AN001;
 	db	3				;Look for strings		;AN001;
 	db	0				;No ranges			;AN001;
 	db	0				;No numerics			;AN001;
-	db	27				;16 possible strings		;AN001;
+	db	33				;33 possible strings		;AN001;
 	db	Size_160			;				;AN001;
 	dw	String_160k_1			;/F:160 			;AN001;
 	db	Size_160			;				;AN001;
@@ -436,6 +446,18 @@ Switch_Size_Value	label	byte		;				;AN001;
 	dw	String_1440k_5			;/F:1.44M			;AN001;
 	db	Size_1440			;				;AN001;
 	dw	String_1440k_6			;/F:1.44MB			;AN001;
+	db	Size_2880			;				;AN001;
+	dw	String_2880k_1			;/F:2880			;AN001;
+	db	Size_2880			;				;AN001;
+	dw	String_2880k_2			;/F:2880K			;AN001;
+	db	Size_2880			;				;AN001;
+	dw	String_2880k_3			;/F:2880KB			;AN001;
+	db	Size_2880			;				;AN001;
+	dw	String_2880k_4			;/F:2.88			;AN001;
+	db	Size_2880			;				;AN001;
+	dw	String_2880k_5			;/F:2.88M			;AN001;
+	db	Size_2880			;				;AN001;
+	dw	String_2880k_6			;/F:2.88MB			;AN001;
 
 
 No_Value	label	byte			;				;AN000;
@@ -478,6 +500,12 @@ String_1440k_3	db	"1440KB",Asciiz_End      ;                               ;AN00
 String_1440k_4	db	"1.44",Asciiz_End      ;                               ;AN001;
 String_1440k_5	db	"1.44M",Asciiz_End      ;                               ;AN001;
 String_1440k_6	db	"1.44MB",Asciiz_End      ;                               ;AN001;
+String_2880k_1	db	"2880" ,Asciiz_End      ;                               ;AN001;
+String_2880k_2	db	"2880K",Asciiz_End      ;                               ;AN001;
+String_2880k_3	db	"2880KB",Asciiz_End      ;                               ;AN001;
+String_2880k_4	db	"2.88",Asciiz_End      ;                               ;AN001;
+String_2880k_5	db	"2.88M",Asciiz_End      ;                               ;AN001;
+String_2880k_6	db	"2.88MB",Asciiz_End      ;                               ;AN001;
 
 ;
 ;************************************************************************
